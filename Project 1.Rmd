@@ -1,0 +1,349 @@
+---
+title: "Project 1"
+output: html_document
+date: "2023-10-28"
+---
+*Zuriel Nwankwo (Replace this part with your name)*
+
+
+For this assignment, we will again be using the `forecast` library.
+
+```{r}
+install.packages("tidyverse")
+library("forecast")
+library("zoo")
+library("ggplot2")
+library("dplyr")
+library("xts")
+library("lubridate")
+library("tseries")
+```
+
+The dataset is the Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity, Quoted on an Investment Basis.
+
+Source: https://fred.stlouisfed.org/series/GS10
+
+
+Setting up Time Series Parameters:
+```{r}
+#Read Data
+data <- read.csv("rates.csv")
+date <- as.Date(data$DATE, format = "%Y-%m-%d")
+rate <- data$GS10
+```
+
+Data Cleaning
+-----------
+```{r}
+length(rate)
+length(date)
+
+head(data)
+tail(data)
+
+na_count_date <- sum(is.na(date))
+na_count_rate <- sum(is.na(rate))
+print(na_count_date)
+print(na_count_rate)
+```
+Based on these observations, the data set has no  missing values and doesn't possess mismatched columns either. 
+Part A
+------
+
+First, we plot the original data:  
+```{r}
+
+# Create an xts object
+rates_xts <- xts(rate, order.by=date)
+
+# Quick plot
+
+par(mar=c(8,8,8,8)) #Set Margins (B, L, T, R)
+
+plot(rates_xts, main = "Monthly Rates April 1953 to October 2023", col ="goldenrod3", xlab = "Date", ylab ="Percent")
+
+```
+ADF Test for Stationarity:
+```{r}
+adf.test(rates_xts)
+```
+
+Part B
+-------------
+- Brief Description:
+
+Stationarity:
+- The series appears to be non-stationary. This is evident from the fluctuations in the mean over the years, with periods of increases followed by decreases. The ADF test supports that as well. 
+
+Trend:
+- Peak in the 1980s: The series exhibits a sharp increase leading up to the early 1980s, reaching its highest point during this decade. This peak could be indicative of significant economic or geopolitical events during that period.
+- Decline Post 1980s: After the peak, there's a pronounced decline that continues until the early 2000s.
+- Stability (2000s - Mid 2010s): The series seems to stabilize for almost two decades, oscillating around a relatively constant mean.
+- Gradual Uptrend (Mid 2010s - 2023): There's a subtle uptrend starting from the mid-2010s, suggesting a slow increase in rates.
+
+Seasonality:
+
+At a glance, the series does not display an overt seasonal pattern. However, finer granular analyses might be needed to ascertain any potential hidden seasonal effects.
+Noise:
+
+There are visible short-term fluctuations throughout the series. Such noise could be due to transient economic events or other short-lived influences.
+Volatility:
+
+High Volatility (Late 1970s - Mid 1980s): The period leading up to the peak in the 1980s and shortly after exhibits high volatility, suggesting uncertainty or significant economic shifts.
+Reduced Volatility (2000s - Mid 2010s): The period of stability also sees diminished volatility, indicating a more predictable economic environment.
+Slight Increase in Volatility (Mid 2010s - 2023): Along with the subtle uptrend, there's a slight increase in volatility, pointing to some economic changes or uncertainties during this period.
+
+Why do we need to take logs here?
+
+We need to log the series and plot:
+
+```{r}
+library(ggplot2)
+#Create a new log dataframe
+log_rates_df <- data.frame(Date = index(rates_xts), Rate = coredata(log(rates_xts)))
+
+gg <- ggplot(log_rates_df, aes(x = Date, y = Rate)) +  # Specify the data and mapping of aesthetics
+  
+  # Plot the line graph with a golden color
+  geom_line(color = "goldenrod3") +
+  # Define titles and labels for the plot
+  labs(title = "Log Monthly Rates April 1953 to October 2023", y = "Percent", x = "Date") +
+  
+  # Use a minimalistic theme for the plot
+  theme_minimal() 
+  
+print(gg)
+
+#check stationarity
+station <- lapply(log_rates_df[, "Rate", drop=FALSE], adf.test, alternative="stationary", k=0)
+print(station)
+```
+- Further thoughts after log-transforming:
+  - Still exhibits non-stationarity. Might need some differencing to make the series stationary.
+
+Part C
+------------
+ACF and PACF Methods to Establish Parameters for ARIMA.
+
+```{r}
+#ACF and PACF plot
+
+acf(log_rates_df, main ="ACF of Log Gold Prices")
+
+pacf(log_rates_df, main = "PACF of Log Gold Prices")
+
+```
+The ACF displays a slow decay indicating non-stationarity and the series might need to be differenced.
+
+Here are the plots for the first difference:
+
+```{r}
+diff_log_df <- data.frame(Date = index(rates_xts), Rate = coredata(diff(log(rates_xts))))
+
+
+gg2 <- ggplot(diff_log_df, aes(x = Date, y = Rate)) +  # Specify the data and mapping of aesthetics
+  
+  # Plot the line graph with a golden color
+  geom_line(color = "goldenrod3") +
+  # Define titles and labels for the plot
+  labs(title = "Log Diff Monthly Gold Price (2012-2023)", y = "Price", x = "Date") +
+  
+  # Use a minimalistic theme for the plot
+  theme_minimal() 
+
+print(gg2)
+
+#ACF and PACF plot
+
+acf(diff_log_df$Rate[!is.na(diff_log_df$Rate)], main = "ACF of Diff Log Gold Prices")
+pacf(diff_log_df$Rate[!is.na(diff_log_df$Rate)], main = "PACF of Diff Log Gold Prices")
+
+
+#check stationarity
+station1 <- lapply(log_rates_df[, "Rate", drop=FALSE], adf.test, alternative="stationary", k=0)
+print(station1)
+```
+The ACF shows a sharp drop after lag 1. Indicative of an MA(q) process
+The PACF plot has a sharp drop after lag 1. Indicative of an AR(p) process
+
+The autocorrelations are quickly dying out suggesting stationarity. Hinting towards an ARIMA (1,1,1)
+
+Take the second difference of the df:
+```{r}
+second_diff_df <- data.frame(Date = index(rates_xts), Rate = coredata(diff(diff(log(rates_xts)))))
+gg3 <- ggplot(second_diff_df, aes(x = Date, y = Rate)) +  # Specify the data and mapping of aesthetics
+  
+  # Plot the line graph with a golden color
+  geom_line(color = "goldenrod3") +
+  # Define titles and labels for the plot
+  labs(title = "Log Diff Monthly Gold Price (2012-2023)", y = "Price", x = "Date") +
+  
+  # Use a minimalistic theme for the plot
+  theme_minimal() 
+
+print(gg3)
+
+#ACF and PACF plot
+
+acf(diff_log_df$Rate[!is.na(diff_log_df$Rate)], main = "ACF of 2Diff Log Gold Prices")
+pacf(diff_log_df$Rate[!is.na(diff_log_df$Rate)], main = "PACF of 2Diff Log Gold Prices")
+
+
+#check stationarity
+station2 <- lapply(log_rates_df[, "Rate", drop=FALSE], adf.test, alternative="stationary", k=0)
+print(station2)
+
+```
+The sharp drop in ACF at lag 1 and the fact that most of the subsequent values are within the confidence interval is a characteristic sign of over-differencing.
+The significant spike at lag 1 in the PACF plot further supports this observation.
+
+
+
+**Choose d for an ARIMA model.  Explain your reasoning.**
+D = 1 for the ARIMA model 
+
+The ACF shows a sharp drop after lag 1. Indicative of an MA(q) process
+The PACF plot has a sharp drop after lag 1. Indicative of an AR(p) process
+
+The autocorrelations are quickly dying out suggesting stationarity. Hinting towards an ARIMA (1,1,1)
+
+
+
+
+
+
+```{r}
+# Get TS_Data'
+ts_data <- ts(diff_log_df$Rate, frequency = 12, start = c(1953, 5))
+
+# Use auto.arima to find the best model
+best_model <- auto.arima(ts_data)
+
+# To view the details of the best model
+summary(best_model)
+
+```
+
+**What (p,d,q) is selected by AICC?  Does the model include a constant?**
+ARIMA(0,0,1) is selected by AICC and the Model does not include a constant.
+
+Part C
+------
+
+Here is the estimated model:
+```{r}
+# edit and uncomment the following two lines
+fit <- Arima(ts_data, order=c(0,0,1), include.constant=FALSE)
+print(fit)
+
+# Extracting coefficients and standard errors from the ARIMA model output
+coefficients <- c(ar1 = 1.7571, ar2 = -0.7654, ma1 = -0.6754, mean = 1.6816)
+standard_errors <- c(ar1 = 0.1228, ar2 = 0.1200, ma1 = 0.1446, mean = 0.0709)
+
+# Calculate 95% confidence intervals
+confidence_intervals <- lapply(names(coefficients), function(param) {
+  coef <- coefficients[param]
+  se <- standard_errors[param]
+  c(lower = coef - 2*se, upper = coef + 2*se)
+})
+
+
+
+```
+
+
+**Are all of the parameters statistically significant?**
+All of the parameters are statiscally significant.
+
+Part D
+------
+
+**Write the complete form of the fitted model. (No code required.)**
+
+xt = 1.7571 (xt-1) + -.7654(xt-2)) - .6754
+
+Part E
+------
+
+Here are the Ljung-Box statistics for lack of fit:
+
+```{r}
+# Hint: use Box.test function.  You must call this function four times,
+# for lags 12, 24, 36, and 48.
+# Extract residuals from the ARIMA model
+residuals <- fit$residuals
+
+# Calculate Ljung-Box statistics for various lags
+lb_stat_12 <- Box.test(residuals, lag=12, type="Ljung-Box")
+lb_stat_24 <- Box.test(residuals, lag=24, type="Ljung-Box")
+lb_stat_36 <- Box.test(residuals, lag=36, type="Ljung-Box")
+lb_stat_48 <- Box.test(residuals, lag=48, type="Ljung-Box")
+
+# Print the results
+# Print the results
+cat("Ljung-Box Test for lag 12:\n")
+cat("Test Statistic:", lb_stat_12$statistic, "\nP-value:", lb_stat_12$p.value, "\n\n")
+
+cat("Ljung-Box Test for lag 24:\n")
+cat("Test Statistic:", lb_stat_24$statistic, "\nP-value:", lb_stat_24$p.value, "\n\n")
+
+cat("Ljung-Box Test for lag 36:\n")
+cat("Test Statistic:", lb_stat_36$statistic, "\nP-value:", lb_stat_36$p.value, "\n\n")
+
+cat("Ljung-Box Test for lag 48:\n")
+cat("Test Statistic:", lb_stat_48$statistic, "\nP-value:", lb_stat_48$p.value, "\n\n")
+
+
+```
+
+**Does the model seem to be adequate?**
+The model does seem to be adeuqate as the P-values are greater than the alpha.There is a lack of evidence of any significant autocorrelation in the residuals meaning the model seems to be fitting well.
+
+Part F
+------
+
+Here is a plot of the residuals, along with the ACF and the PACF of the
+residuals:
+
+```{r}
+# Add TS plot, ACF, and PACF
+# Extract residuals
+
+
+
+# Time series plot of residuals
+ts.plot(residuals, main="Residuals over Time")
+
+# ACF of residuals
+acf(residuals, main="ACF of Residuals")
+
+# PACF of residuals
+pacf(residuals, main="PACF of Residuals")
+
+
+```
+
+**Do these plots indicate any inadequacies in the model?**
+On the time series plot, there seems to be a huge spike in the residuals towards the end of the model but besides the time series, the ACF and the PACF largely displays the bars within the blue bands, signifying that the model has captured most if not all of the underlying patterns in the data.
+
+Part G
+------
+
+Here is the original data, along with the forecasts and 95% forecast intervals
+for lead times 1 to 30:
+
+```{r}
+# Hint: use the forecast function
+# Forecasting 30 periods ahead
+forecasts <- forecast(fit, h=30)
+
+# Plotting the forecasts
+plot(forecasts)
+```
+
+**Do the forecasts seem reasonable?**
+The forecasts seem reasonable given the nature of the historical data. The oscillatory patterns in the data are carried over and while it may look oversimplified, the ARIMA model tries to capture the general behavior of the series
+
+**Do the forecast intervals seem excessively wide?**
+The forecast intervals do not seem excessively wide either, given the historical volatility. They do widen for distant future periods but that is omly to convey uncertainty and when compared to the data, it is not enough to be deemed excessive.
+
